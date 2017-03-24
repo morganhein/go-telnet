@@ -40,22 +40,42 @@ const (
 	RFC  = byte(33) // Remote Flow Control
 )
 
-// Connection is a telnet interface which implements net.Conn, along
+// Connection is a telnet interface which implements net.conn, along
 // with some proposed extended functionality for handling telnet options.
 type Connection interface {
+	// Read the current process sent from the server after being processed
+	// for telnet options.
 	Read(b []byte) (n int, err error)
+	// Write the byte process to the output stream. Escaping 255 bytes is done
+	// automatically, so is not required by the caller. Note that the written
+	// count may be off due to the 255 byte escaping.
 	Write(b []byte) (n int, err error)
+	// Close the connection
+	// This is a pass-through method to the underlying net.conn
+	// without any processing.
 	Close() error
+	// LocalAddr returns the LocalAddress of this connection.
+	// This is a pass-through method to the underlying net.conn
+	// without any processing.
 	LocalAddr() net.Addr
+	// RemoteAddr returns the RemoteAddress of this connection.
+	// This is a pass-through method to the underlying net.conn
+	// without any processing.
 	RemoteAddr() net.Addr
+	// SetDeadline is a pass-through method to the underlying net.conn
+	// without any processing.
 	SetDeadline(t time.Time) error
+	// SetReadDeadline is a pass-through method to the underlying net.conn
+	// without any processing.
 	SetReadDeadline(t time.Time) error
+	// SetWriteDeadline is a pass-through method to the underlying net.conn
+	// without any processing.
 	SetWriteDeadline(t time.Time) error
 	//SetOption(opt byte, val []byte) (success bool, err error) proposed for future development.
 }
 
 // Con is the internal telnet connection object.
-type Conn struct {
+type conn struct {
 	c    net.Conn
 	quit chan bool
 	bIn  *bytes.Buffer // in from the connection
@@ -66,12 +86,12 @@ type Conn struct {
 // which transparently handles telnet options and escaping.
 func Dial(network, address string) (Connection, error) {
 	fmt.Println("Connecting.")
-	var t Conn
+	var t conn
 	return t.dial(network, address)
 }
 
-// Connect is a helper function for creating and connecting to a telnet session.
-func (c *Conn) dial(network, address string) (Connection, error) {
+// Dial is a helper function for creating and connecting to a telnet session.
+func (c *conn) dial(network, address string) (Connection, error) {
 	var err error
 	c.c, err = net.Dial(network, address)
 	c.quit = make(chan bool, 1)
@@ -81,13 +101,13 @@ func (c *Conn) dial(network, address string) (Connection, error) {
 
 // Read the current process sent from the server after being processed
 // for telnet options.
-func (c *Conn) Read(b []byte) (n int, err error) {
+func (c *conn) Read(b []byte) (n int, err error) {
 	return c.bOut.Read(b)
 }
 
 // Process buffers incoming traffic, parses it for telnet IAC commands,
 // and forwards on the results either upstream or to be handled as a telnet command.
-func (c *Conn) process() {
+func (c *conn) process() {
 	//bIn process from the underlying TCP connection
 	c.bIn = bytes.NewBuffer(nil)
 	//bOUt goes upstream
@@ -126,7 +146,7 @@ func (c *Conn) process() {
 // ProcessIAC determines if the IAC is an escaped 255 byte,
 // or an actual command to be processed. If it's an escaped byte, it removes
 // the duplication/escaping and forwards the buffer upstream.
-func (c *Conn) processIAC() {
+func (c *conn) processIAC() {
 	// If there is only a single character, don't process since we can't do anything with it
 	if c.bIn.Len() <= 1 {
 		return
@@ -144,7 +164,7 @@ func (c *Conn) processIAC() {
 
 // ParseCommand is a simple switch to figure out what command this is,
 // and forward it on for processing.
-func (c *Conn) parseCommand(buff []byte) {
+func (c *conn) parseCommand(buff []byte) {
 	// iac := buff[0]
 	cmd := buff[1]
 	switch cmd {
@@ -171,7 +191,7 @@ func (c *Conn) parseCommand(buff []byte) {
 
 // Will responds to Telnet WILL commands.
 // By default it enables Stop-Go-Ahead, and refuses everything else.
-func (c *Conn) will(buf []byte) {
+func (c *conn) will(buf []byte) {
 	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -189,7 +209,7 @@ func (c *Conn) will(buf []byte) {
 
 // Dont responds to Telnet DONT commands.
 // By default it accepts all DONT commands and responds with WONT <opt>
-func (c *Conn) dont(buf []byte) {
+func (c *conn) dont(buf []byte) {
 	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -202,7 +222,7 @@ func (c *Conn) dont(buf []byte) {
 
 // Do responds to Telnet DO commands.
 // By default it accepts Binary transmissions, and refuses all other options.
-func (c *Conn) do(buf []byte) {
+func (c *conn) do(buf []byte) {
 	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -221,7 +241,7 @@ func (c *Conn) do(buf []byte) {
 
 // Wont responds to Telnet WONT commands.
 // By default it consumes these commands without any further processing.
-func (c *Conn) wont(buf []byte) {
+func (c *conn) wont(buf []byte) {
 	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -233,7 +253,7 @@ func (c *Conn) wont(buf []byte) {
 // Write the byte process to the output stream. Escaping 255 bytes is done
 // automatically, so is not required by the caller. Note that the written
 // count may be off due to the 255 byte escaping.
-func (c *Conn) Write(b []byte) (n int, err error) {
+func (c *conn) Write(b []byte) (n int, err error) {
 	for i := 0; i < len(b); i++ {
 		// If the stream contains a 255, then escape it by sending a second 255
 		if b[i] == IAC {
@@ -248,41 +268,41 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 }
 
 // Close the connection
-// This is a pass-through method to the underlying net.Conn
+// This is a pass-through method to the underlying net.conn
 // without any processing.
-func (c *Conn) Close() error {
+func (c *conn) Close() error {
 	c.quit <- true
 	return c.c.Close()
 }
 
 // LocalAddr returns the LocalAddress of this connection.
-// This is a pass-through method to the underlying net.Conn
+// This is a pass-through method to the underlying net.conn
 // without any processing.
-func (c *Conn) LocalAddr() net.Addr {
+func (c *conn) LocalAddr() net.Addr {
 	return c.c.LocalAddr()
 }
 
 // RemoteAddr returns the RemoteAddress of this connection.
-// This is a pass-through method to the underlying net.Conn
+// This is a pass-through method to the underlying net.conn
 // without any processing.
-func (c *Conn) RemoteAddr() net.Addr {
+func (c *conn) RemoteAddr() net.Addr {
 	return c.c.RemoteAddr()
 }
 
-// SetDeadline is a pass-through method to the underlying net.Conn
+// SetDeadline is a pass-through method to the underlying net.conn
 // without any processing.
-func (c *Conn) SetDeadline(t time.Time) error {
+func (c *conn) SetDeadline(t time.Time) error {
 	return c.c.SetDeadline(t)
 }
 
-// SetReadDeadline is a pass-through method to the underlying net.Conn
+// SetReadDeadline is a pass-through method to the underlying net.conn
 // without any processing.
-func (c *Conn) SetReadDeadline(t time.Time) error {
+func (c *conn) SetReadDeadline(t time.Time) error {
 	return c.c.SetReadDeadline(t)
 }
 
-// SetWriteDeadline is a pass-through method to the underlying net.Conn
+// SetWriteDeadline is a pass-through method to the underlying net.conn
 // without any processing.
-func (c *Conn) SetWriteDeadline(t time.Time) error {
+func (c *conn) SetWriteDeadline(t time.Time) error {
 	return c.c.SetWriteDeadline(t)
 }

@@ -12,7 +12,7 @@ import (
 
 func TestEscapedIAC(t *testing.T) {
 	fmt.Println("")
-	tel := &Conn{
+	tel := &conn{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 		quit: make(chan bool, 1),
@@ -24,7 +24,7 @@ func TestEscapedIAC(t *testing.T) {
 }
 
 func TestDo(t *testing.T) {
-	tel := &Conn{
+	tel := &conn{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -47,7 +47,7 @@ func TestDo(t *testing.T) {
 }
 
 func TestWill(t *testing.T) {
-	tel := &Conn{
+	tel := &conn{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -71,7 +71,7 @@ func TestWill(t *testing.T) {
 }
 
 func TestWont(t *testing.T) {
-	tel := &Conn{
+	tel := &conn{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -88,7 +88,7 @@ func TestWont(t *testing.T) {
 }
 
 func TestDont(t *testing.T) {
-	tel := &Conn{
+	tel := &conn{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -111,7 +111,7 @@ func TestDont(t *testing.T) {
 }
 
 func TestBuffer(t *testing.T) {
-	tel := &Conn{
+	tel := &conn{
 		quit: make(chan bool, 1),
 	}
 
@@ -150,7 +150,7 @@ func TestBuffer(t *testing.T) {
 }
 
 func TestBuffer_ForwardUpToIAC(t *testing.T) {
-	tel := &Conn{
+	tel := &conn{
 		quit: make(chan bool, 1),
 	}
 
@@ -187,7 +187,7 @@ func TestBuffer_ForwardUpToIAC(t *testing.T) {
 }
 
 func TestBuffer_ForwardUpToIACAndProcess(t *testing.T) {
-	tel := &Conn{
+	tel := &conn{
 		quit: make(chan bool, 1),
 	}
 
