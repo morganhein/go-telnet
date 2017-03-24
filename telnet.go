@@ -1,5 +1,5 @@
 // Package go_telnet provides a net.Conn compatible interface for connection to telnet servers
-// that require telnet option negotiation.
+// that require telnet option negotiation
 package go_telnet
 
 import (
