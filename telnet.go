@@ -27,6 +27,7 @@ const (
 	SE   = byte(240) // End of Subnegotiation
 )
 
+// Options
 const (
 	BIN  = byte(0) // Binary Transmission
 	ECHO = byte(1)
@@ -37,6 +38,8 @@ const (
 	RFC  = byte(33) // Remote Flow Control
 )
 
+// Connection is a telnet interface which implements net.Conn, along
+// with some proposed extended functionality for handling telnet options.
 type Connection interface {
 	Read(b []byte) (n int, err error)
 	Write(b []byte) (n int, err error)
@@ -56,6 +59,8 @@ type con struct {
 	bOut *bytes.Buffer // upstream
 }
 
+// Dial connects to a TCP endpoint and returns a Telnet Connection object,
+// which transparently handles telnet options and escaping.
 func Dial(network, address string) (Connection, error) {
 	fmt.Println("Connecting.")
 	var t con
@@ -70,6 +75,8 @@ func (c *con) dial(network, address string) (Connection, error) {
 	return c, err
 }
 
+// Read the current buffer sent from the server after being processed
+// for telnet options.
 func (c *con) Read(b []byte) (n int, err error) {
 	return c.bOut.Read(b)
 }
@@ -204,6 +211,9 @@ func (c *con) wont(buf []byte) {
 	_ = c.bIn.Next(3)
 }
 
+// Write the byte buffer to the output stream. Escaping 255 bytes is done
+// automatically, so is not required by the caller. Note that the written
+// count may be off due to the 255 byte escaping.
 func (c *con) Write(b []byte) (n int, err error) {
 	for i := 0; i < len(b); i++ {
 		// If the stream contains a 255, then escape it by sending a second 255
@@ -218,27 +228,42 @@ func (c *con) Write(b []byte) (n int, err error) {
 	return c.c.Write(b)
 }
 
+// Close the connection
+// This is a pass-through method to the underlying net.Conn
+// without any processing.
 func (c *con) Close() error {
 	c.quit <- true
 	return c.c.Close()
 }
 
+// LocalAddr returns the LocalAddress of this connection.
+// This is a pass-through method to the underlying net.Conn
+// without any processing.
 func (c *con) LocalAddr() net.Addr {
 	return c.c.LocalAddr()
 }
 
+// RemoteAddr returns the RemoteAddress of this connection.
+// This is a pass-through method to the underlying net.Conn
+// without any processing.
 func (c *con) RemoteAddr() net.Addr {
 	return c.c.RemoteAddr()
 }
 
+// SetDeadline is a pass-through method to the underlying net.Conn
+// without any processing.
 func (c *con) SetDeadline(t time.Time) error {
 	return c.c.SetDeadline(t)
 }
 
+// SetReadDeadline is a pass-through method to the underlying net.Conn
+// without any processing.
 func (c *con) SetReadDeadline(t time.Time) error {
 	return c.c.SetReadDeadline(t)
 }
 
+// SetWriteDeadline is a pass-through method to the underlying net.Conn
+// without any processing.
 func (c *con) SetWriteDeadline(t time.Time) error {
 	return c.c.SetWriteDeadline(t)
 }
