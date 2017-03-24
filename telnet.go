@@ -37,20 +37,32 @@ const (
 	RFC  = byte(33) // Remote Flow Control
 )
 
-type Connection struct {
+type Connection interface {
+	Read(b []byte) (n int, err error)
+	Write(b []byte) (n int, err error)
+	Close() error
+	LocalAddr() net.Addr
+	RemoteAddr() net.Addr
+	SetDeadline(t time.Time) error
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
+	//SetOption(opt byte, val []byte) (success bool, err error) proposed for future development.
+}
+
+type con struct {
 	c    net.Conn
 	quit chan bool
 	bIn  *bytes.Buffer // in from the connection
 	bOut *bytes.Buffer // upstream
 }
 
-func Dial(network, address string) (net.Conn, error) {
+func Dial(network, address string) (Connection, error) {
 	fmt.Println("Connecting.")
-	var t Connection
-	return t.Dial(network, address)
+	var t con
+	return t.dial(network, address)
 }
 
-func (c *Connection) Dial(network, address string) (*Connection, error) {
+func (c *con) dial(network, address string) (Connection, error) {
 	var err error
 	c.c, err = net.Dial(network, address)
 	c.quit = make(chan bool, 1)
@@ -58,11 +70,11 @@ func (c *Connection) Dial(network, address string) (*Connection, error) {
 	return c, err
 }
 
-func (c *Connection) Read(b []byte) (n int, err error) {
+func (c *con) Read(b []byte) (n int, err error) {
 	return c.bOut.Read(b)
 }
 
-func (c *Connection) buffer() {
+func (c *con) buffer() {
 	//bIn buffer from the underlying TCP connection
 	c.bIn = bytes.NewBuffer(nil)
 	//bOUt goes upstream
@@ -98,7 +110,7 @@ func (c *Connection) buffer() {
 	}
 }
 
-func (c *Connection) processIAC() {
+func (c *con) processIAC() {
 	// If there is only a single character, don't process since we can't do anything with it
 	if c.bIn.Len() <= 1 {
 		return
@@ -114,7 +126,7 @@ func (c *Connection) processIAC() {
 	c.parseCommand(b)
 }
 
-func (c *Connection) parseCommand(buff []byte) {
+func (c *con) parseCommand(buff []byte) {
 	// iac := buff[0]
 	cmd := buff[1]
 	switch cmd {
@@ -139,7 +151,7 @@ func (c *Connection) parseCommand(buff []byte) {
 	}
 }
 
-func (c *Connection) will(buf []byte) {
+func (c *con) will(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -155,7 +167,7 @@ func (c *Connection) will(buf []byte) {
 	_ = c.bIn.Next(3)
 }
 
-func (c *Connection) dont(buf []byte) {
+func (c *con) dont(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -166,7 +178,7 @@ func (c *Connection) dont(buf []byte) {
 	_ = c.bIn.Next(3)
 }
 
-func (c *Connection) do(buf []byte) {
+func (c *con) do(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -183,7 +195,7 @@ func (c *Connection) do(buf []byte) {
 	c.bIn.Next(3)
 }
 
-func (c *Connection) wont(buf []byte) {
+func (c *con) wont(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -192,7 +204,7 @@ func (c *Connection) wont(buf []byte) {
 	_ = c.bIn.Next(3)
 }
 
-func (c *Connection) Write(b []byte) (n int, err error) {
+func (c *con) Write(b []byte) (n int, err error) {
 	for i := 0; i < len(b); i++ {
 		// If the stream contains a 255, then escape it by sending a second 255
 		if b[i] == IAC {
@@ -206,27 +218,27 @@ func (c *Connection) Write(b []byte) (n int, err error) {
 	return c.c.Write(b)
 }
 
-func (c *Connection) Close() error {
+func (c *con) Close() error {
 	c.quit <- true
 	return c.c.Close()
 }
 
-func (c *Connection) LocalAddr() net.Addr {
+func (c *con) LocalAddr() net.Addr {
 	return c.c.LocalAddr()
 }
 
-func (c *Connection) RemoteAddr() net.Addr {
+func (c *con) RemoteAddr() net.Addr {
 	return c.c.RemoteAddr()
 }
 
-func (c *Connection) SetDeadline(t time.Time) error {
+func (c *con) SetDeadline(t time.Time) error {
 	return c.c.SetDeadline(t)
 }
 
-func (c *Connection) SetReadDeadline(t time.Time) error {
+func (c *con) SetReadDeadline(t time.Time) error {
 	return c.c.SetReadDeadline(t)
 }
 
-func (c *Connection) SetWriteDeadline(t time.Time) error {
+func (c *con) SetWriteDeadline(t time.Time) error {
 	return c.c.SetWriteDeadline(t)
 }
