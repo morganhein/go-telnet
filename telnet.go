@@ -1,4 +1,4 @@
-// Package go_telnet provides a net.Conn compatible interface for connection to telnet servers
+// Package gote (go-telnet) provides a net.Conn compatible interface for connection to telnet servers
 // that require telnet option negotiation
 package gote
 
@@ -43,10 +43,10 @@ const (
 // Connection is a telnet interface which implements net.conn, along
 // with some proposed extended functionality for handling telnet options.
 type Connection interface {
-	// Read the current process sent from the server after being processed
+	// Read the data sent from the server after being processed
 	// for telnet options.
 	Read(b []byte) (n int, err error)
-	// Write the byte process to the output stream. Escaping 255 bytes is done
+	// Write the byte buffer to the output stream. Escaping 255 bytes is done
 	// automatically, so is not required by the caller. Note that the written
 	// count may be off due to the 255 byte escaping.
 	Write(b []byte) (n int, err error)
