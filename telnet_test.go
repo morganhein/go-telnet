@@ -12,7 +12,7 @@ import (
 
 func TestEscapedIAC(t *testing.T) {
 	fmt.Println("")
-	tel := &Telnet{
+	tel := &Connection{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 		quit: make(chan bool, 1),
@@ -24,7 +24,7 @@ func TestEscapedIAC(t *testing.T) {
 }
 
 func TestDo(t *testing.T) {
-	tel := &Telnet{
+	tel := &Connection{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -47,7 +47,7 @@ func TestDo(t *testing.T) {
 }
 
 func TestWill(t *testing.T) {
-	tel := &Telnet{
+	tel := &Connection{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -71,7 +71,7 @@ func TestWill(t *testing.T) {
 }
 
 func TestWont(t *testing.T) {
-	tel := &Telnet{
+	tel := &Connection{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -88,7 +88,7 @@ func TestWont(t *testing.T) {
 }
 
 func TestDont(t *testing.T) {
-	tel := &Telnet{
+	tel := &Connection{
 		bIn:  bytes.NewBuffer(nil),
 		bOut: bytes.NewBuffer(nil),
 	}
@@ -111,7 +111,7 @@ func TestDont(t *testing.T) {
 }
 
 func TestBuffer(t *testing.T) {
-	tel := &Telnet{
+	tel := &Connection{
 		quit: make(chan bool, 1),
 	}
 
@@ -124,7 +124,7 @@ func TestBuffer(t *testing.T) {
 	time.Sleep(time.Duration(50) * time.Millisecond)
 
 	go func() {
-		defer tel.c.Close()
+		//defer tel.c.Close()
 		i, err := s.Write([]byte{IAC, DO, ECHO})
 		if err != nil {
 			t.Fatal(err)
@@ -136,24 +136,21 @@ func TestBuffer(t *testing.T) {
 	}()
 
 	buf := make([]byte, 3)
-
-	for {
-		i, err := s.Read(buf)
-		if i != 0 {
-			assert.Equal(t, []byte{IAC, WONT, ECHO}, buf)
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(time.Duration(5) * time.Millisecond)
+	i, err := s.Read(buf)
+	if i != 0 {
+		assert.Equal(t, []byte{IAC, WONT, ECHO}, buf)
 	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Duration(5) * time.Millisecond)
 
 	tel.quit <- true
 }
 
 func TestBuffer_ForwardUpToIAC(t *testing.T) {
-	tel := &Telnet{
+	tel := &Connection{
 		quit: make(chan bool, 1),
 	}
 
@@ -171,24 +168,73 @@ func TestBuffer_ForwardUpToIAC(t *testing.T) {
 		time.Sleep(time.Duration(50) * time.Millisecond)
 	}()
 
-	buf := make([]byte, 6)
-	for {
-		i, err := tel.bOut.Read(buf)
-
-		if err != nil {
-			t.Fatal(err)
-		}
-		if i != 0 {
-			assert.Equal(t, []byte{1, 2, 3, 4, 5, 6}, buf)
-			break
-		}
-		time.Sleep(time.Duration(50) * time.Millisecond)
+	// Wait for the response
+	for tel.bOut.Len() == 0 {
+		time.Sleep(time.Duration(20) * time.Millisecond)
 	}
+
+	buf := make([]byte, 6)
+	_, err := tel.bOut.Read(buf)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, []byte{1, 2, 3, 4, 5, 6}, buf)
+
+	time.Sleep(time.Duration(50) * time.Millisecond)
 
 	tel.quit <- true
 }
 
-func _TestDial(*testing.T) {
+func TestBuffer_ForwardUpToIACAndProcess(t *testing.T) {
+	tel := &Connection{
+		quit: make(chan bool, 1),
+	}
+
+	c := mock_conn.NewConn()
+	tel.c = c.Client
+	s := c.Server
+
+	go tel.buffer()
+	time.Sleep(time.Duration(50) * time.Millisecond)
+
+	go func() {
+		_, err := tel.bIn.Write([]byte{1, 2, 3, 4, 5, 6, IAC, DO, ECHO})
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Duration(50) * time.Millisecond)
+	}()
+
+	// Wait for the response
+	for tel.bOut.Len() == 0 {
+		time.Sleep(time.Duration(20) * time.Millisecond)
+	}
+
+	buf := make([]byte, 6)
+	_, err := tel.bOut.Read(buf)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, []byte{1, 2, 3, 4, 5, 6}, buf)
+
+	buf = make([]byte, 3)
+	// Wait for the next set
+	_, err = s.Read(buf)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, []byte{IAC, WONT, ECHO}, buf)
+
+	tel.quit <- true
+	time.Sleep(time.Duration(50) * time.Millisecond)
+}
+
+func TestDial(*testing.T) {
 	conn, err := Dial("tcp", "103.237.54.17:23")
 	if err != nil {
 		panic(err)

@@ -1,8 +1,9 @@
 package go_telnet
 
 import (
-	"bufio"
 	"bytes"
+	"fmt"
+	"io"
 	"net"
 	"time"
 )
@@ -36,7 +37,7 @@ const (
 	RFC  = byte(33) // Remote Flow Control
 )
 
-type Telnet struct {
+type Connection struct {
 	c    net.Conn
 	quit chan bool
 	bIn  *bytes.Buffer // in from the connection
@@ -44,83 +45,87 @@ type Telnet struct {
 }
 
 func Dial(network, address string) (net.Conn, error) {
-	var t Telnet
+	fmt.Println("Connecting.")
+	var t Connection
 	return t.Dial(network, address)
 }
 
-func (te *Telnet) Dial(network, address string) (*Telnet, error) {
+func (c *Connection) Dial(network, address string) (*Connection, error) {
 	var err error
-	te.c, err = net.Dial(network, address)
-	te.quit = make(chan bool, 1)
-	go te.buffer()
-	return te, err
+	c.c, err = net.Dial(network, address)
+	c.quit = make(chan bool, 1)
+	go c.buffer()
+	return c, err
 }
 
-func (te *Telnet) Read(b []byte) (n int, err error) {
-	return te.bOut.Read(b)
+func (c *Connection) Read(b []byte) (n int, err error) {
+	return c.bOut.Read(b)
 }
 
-func (te *Telnet) buffer() {
-	te.bIn = bytes.NewBuffer(nil)
-	te.bOut = bytes.NewBuffer(nil)
-	connBuff := bufio.NewReader(te.c)
+func (c *Connection) buffer() {
+	//bIn buffer from the underlying TCP connection
+	c.bIn = bytes.NewBuffer(nil)
+	//bOUt goes upstream
+	c.bOut = bytes.NewBuffer(nil)
+
+	go io.Copy(c.bIn, c.c)
+
 	for {
-		b := te.bIn.Bytes()
-		//If no 255's exist, just copy and move on
-		if i := bytes.IndexByte(b, IAC); i == -1 {
-			te.bOut.WriteTo(te.bOut)
-		} else {
-			//handle the IAC here
-			//read from the input buffer up to, but not including, the 255
-			te.bOut.Write(te.bIn.Next(i))
-			te.processIAC()
+		// if there's data to process
+		if b := c.bIn.Bytes(); len(b) > 0 {
+			//If no 255's exist, just copy and move on
+			if i := bytes.IndexByte(b, IAC); i == -1 {
+				c.bIn.WriteTo(c.bOut)
+			} else {
+				//handle the IAC here
+				//read from the input buffer up to, but not including, the 255
+				c.bOut.Write(c.bIn.Next(i))
+				c.processIAC()
+			}
 		}
+
 		select {
-		case <-te.quit:
+		case <-c.quit:
 			return
 		default:
 			break
 		}
-		//refill the input buffer
-		connBuff.Peek(1)
-		if connBuff.Buffered() > 0 {
-			connBuff.WriteTo(te.bIn)
-		}
+
 		// If the input buffer is empty, that means the connection is also empty so let's wait a bit
-		if te.bIn.Len() == 0 {
+		if c.bIn.Len() == 0 {
 			time.Sleep(time.Duration(100) * time.Millisecond)
 		}
 	}
 }
 
-func (te *Telnet) processIAC() {
+func (c *Connection) processIAC() {
 	// If there is only a single character, don't process since we can't do anything with it
-	if te.bIn.Len() <= 1 {
+	if c.bIn.Len() <= 1 {
 		return
 	}
-	b := te.bIn.Bytes()
+	b := c.bIn.Bytes()
 	// If this is an escaped 255, write a single 255 to the output buffer and move the
 	// pointer forwards twice
 	if b[0] == 255 && b[1] == 255 {
-		te.bOut.Write(te.bIn.Next(1))
-		_ = te.bIn.Next(1)
+		c.bOut.Write(c.bIn.Next(1))
+		_ = c.bIn.Next(1)
 		return
 	}
-	te.parseCommand(b)
+	c.parseCommand(b)
 }
 
-func (te *Telnet) parseCommand(buff []byte) {
+func (c *Connection) parseCommand(buff []byte) {
 	// iac := buff[0]
 	cmd := buff[1]
 	switch cmd {
 	case DONT:
-		te.dont(buff)
+		c.dont(buff)
 	case DO:
-		te.do(buff)
+		c.do(buff)
 	case WONT:
-		te.wont(buff)
+		c.wont(buff)
 	case WILL:
-		te.will(buff)
+		c.will(buff)
 	//case SB:
 	//	break
 	//case AYT:
@@ -134,29 +139,34 @@ func (te *Telnet) parseCommand(buff []byte) {
 	}
 }
 
-func (te *Telnet) will(buf []byte) {
+func (c *Connection) will(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
 	}
 	opt := buf[2]
-	te.c.Write([]byte{255, DONT, opt})
+	switch opt {
+	case SGA:
+		c.c.Write([]byte{255, DO, SGA})
+	default:
+		c.c.Write([]byte{255, DONT, opt})
+	}
 	// consume IAC, Cmd, and Option from the input buffer
-	_ = te.bIn.Next(3)
+	_ = c.bIn.Next(3)
 }
 
-func (te *Telnet) dont(buf []byte) {
+func (c *Connection) dont(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
 	}
 	opt := buf[2]
-	te.c.Write([]byte{255, WONT, opt})
+	c.c.Write([]byte{255, WONT, opt})
 	// consume IAC, Cmd, and Option from the input buffer
-	_ = te.bIn.Next(3)
+	_ = c.bIn.Next(3)
 }
 
-func (te *Telnet) do(buf []byte) {
+func (c *Connection) do(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
@@ -164,25 +174,25 @@ func (te *Telnet) do(buf []byte) {
 	opt := buf[2]
 	switch opt {
 	case BIN:
-		te.c.Write([]byte{255, WILL, BIN})
+		c.c.Write([]byte{255, WILL, BIN})
 		break
 	default:
-		te.c.Write([]byte{255, WONT, opt})
+		c.c.Write([]byte{255, WONT, opt})
 	}
 	// consume IAC, Cmd, and Option from the input buffer
-	_ = te.bIn.Next(3)
+	c.bIn.Next(3)
 }
 
-func (te *Telnet) wont(buf []byte) {
+func (c *Connection) wont(buf []byte) {
 	// if we don't have the option in the buffer yet, return and wait for more information
 	if len(buf) < 3 {
 		return
 	}
 	// consume IAC, Cmd, and Option from the input buffer
-	_ = te.bIn.Next(3)
+	_ = c.bIn.Next(3)
 }
 
-func (te *Telnet) Write(b []byte) (n int, err error) {
+func (c *Connection) Write(b []byte) (n int, err error) {
 	for i := 0; i < len(b); i++ {
 		// If the stream contains a 255, then escape it by sending a second 255
 		if b[i] == IAC {
@@ -193,30 +203,30 @@ func (te *Telnet) Write(b []byte) (n int, err error) {
 	}
 	//Not abstracting away the duplicate 255 bytes that might have been sent
 	//Todo: possibly return the unescaped byte count instead
-	return te.c.Write(b)
+	return c.c.Write(b)
 }
 
-func (te *Telnet) Close() error {
-	te.quit <- true
-	return te.c.Close()
+func (c *Connection) Close() error {
+	c.quit <- true
+	return c.c.Close()
 }
 
-func (te *Telnet) LocalAddr() net.Addr {
-	return te.c.LocalAddr()
+func (c *Connection) LocalAddr() net.Addr {
+	return c.c.LocalAddr()
 }
 
-func (te *Telnet) RemoteAddr() net.Addr {
-	return te.c.RemoteAddr()
+func (c *Connection) RemoteAddr() net.Addr {
+	return c.c.RemoteAddr()
 }
 
-func (te *Telnet) SetDeadline(t time.Time) error {
-	return te.c.SetDeadline(t)
+func (c *Connection) SetDeadline(t time.Time) error {
+	return c.c.SetDeadline(t)
 }
 
-func (te *Telnet) SetReadDeadline(t time.Time) error {
-	return te.c.SetReadDeadline(t)
+func (c *Connection) SetReadDeadline(t time.Time) error {
+	return c.c.SetReadDeadline(t)
 }
 
-func (te *Telnet) SetWriteDeadline(t time.Time) error {
-	return te.c.SetWriteDeadline(t)
+func (c *Connection) SetWriteDeadline(t time.Time) error {
+	return c.c.SetWriteDeadline(t)
 }
