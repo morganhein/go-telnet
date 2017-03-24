@@ -54,6 +54,7 @@ type Connection interface {
 	//SetOption(opt byte, val []byte) (success bool, err error) proposed for future development.
 }
 
+// Con is the internal telnet connection object.
 type con struct {
 	c    net.Conn
 	quit chan bool
@@ -66,11 +67,11 @@ type con struct {
 func Dial(network, address string) (Connection, error) {
 	fmt.Println("Connecting.")
 	var t con
-	return t.dial(network, address)
+	return t.connect(network, address)
 }
 
-// Dial is a helper function for creating and connecting to a telnet session.
-func (c *con) dial(network, address string) (Connection, error) {
+// Connect is a helper function for creating and connecting to a telnet session.
+func (c *con) connect(network, address string) (Connection, error) {
 	var err error
 	c.c, err = net.Dial(network, address)
 	c.quit = make(chan bool, 1)
