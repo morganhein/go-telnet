@@ -69,22 +69,25 @@ func Dial(network, address string) (Connection, error) {
 	return t.dial(network, address)
 }
 
+// Dial is a helper function for creating and connecting to a telnet session.
 func (c *con) dial(network, address string) (Connection, error) {
 	var err error
 	c.c, err = net.Dial(network, address)
 	c.quit = make(chan bool, 1)
-	go c.buffer()
+	go c.process()
 	return c, err
 }
 
-// Read the current buffer sent from the server after being processed
+// Read the current process sent from the server after being processed
 // for telnet options.
 func (c *con) Read(b []byte) (n int, err error) {
 	return c.bOut.Read(b)
 }
 
-func (c *con) buffer() {
-	//bIn buffer from the underlying TCP connection
+// Process buffers incoming traffic, parses it for telnet IAC commands,
+// and forwards on the results either upstream or to be handled as a telnet command.
+func (c *con) process() {
+	//bIn process from the underlying TCP connection
 	c.bIn = bytes.NewBuffer(nil)
 	//bOUt goes upstream
 	c.bOut = bytes.NewBuffer(nil)
@@ -99,7 +102,7 @@ func (c *con) buffer() {
 				c.bIn.WriteTo(c.bOut)
 			} else {
 				//handle the IAC here
-				//read from the input buffer up to, but not including, the 255
+				//read from the input process up to, but not including, the 255
 				c.bOut.Write(c.bIn.Next(i))
 				c.processIAC()
 			}
@@ -112,20 +115,23 @@ func (c *con) buffer() {
 			break
 		}
 
-		// If the input buffer is empty, that means the connection is also empty so let's wait a bit
+		// If the input process is empty, that means the connection is also empty so let's wait a bit
 		if c.bIn.Len() == 0 {
 			time.Sleep(time.Duration(100) * time.Millisecond)
 		}
 	}
 }
 
+// ProcessIAC determines if the IAC is an escaped 255 byte,
+// or an actual command to be processed. If it's an escaped byte, it removes
+// the duplication/escaping and forwards the buffer upstream.
 func (c *con) processIAC() {
 	// If there is only a single character, don't process since we can't do anything with it
 	if c.bIn.Len() <= 1 {
 		return
 	}
 	b := c.bIn.Bytes()
-	// If this is an escaped 255, write a single 255 to the output buffer and move the
+	// If this is an escaped 255, write a single 255 to the output process and move the
 	// pointer forwards twice
 	if b[0] == 255 && b[1] == 255 {
 		c.bOut.Write(c.bIn.Next(1))
@@ -135,6 +141,8 @@ func (c *con) processIAC() {
 	c.parseCommand(b)
 }
 
+// ParseCommand is a simple switch to figure out what command this is,
+// and forward it on for processing.
 func (c *con) parseCommand(buff []byte) {
 	// iac := buff[0]
 	cmd := buff[1]
@@ -160,8 +168,10 @@ func (c *con) parseCommand(buff []byte) {
 	}
 }
 
+// Will responds to Telnet WILL commands.
+// By default it enables Stop-Go-Ahead, and refuses everything else.
 func (c *con) will(buf []byte) {
-	// if we don't have the option in the buffer yet, return and wait for more information
+	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
 	}
@@ -172,23 +182,27 @@ func (c *con) will(buf []byte) {
 	default:
 		c.c.Write([]byte{255, DONT, opt})
 	}
-	// consume IAC, Cmd, and Option from the input buffer
+	// consume IAC, Cmd, and Option from the input process
 	_ = c.bIn.Next(3)
 }
 
+// Dont responds to Telnet DONT commands.
+// By default it accepts all DONT commands and responds with WONT <opt>
 func (c *con) dont(buf []byte) {
-	// if we don't have the option in the buffer yet, return and wait for more information
+	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
 	}
 	opt := buf[2]
 	c.c.Write([]byte{255, WONT, opt})
-	// consume IAC, Cmd, and Option from the input buffer
+	// consume IAC, Cmd, and Option from the input process
 	_ = c.bIn.Next(3)
 }
 
+// Do responds to Telnet DO commands.
+// By default it accepts Binary transmissions, and refuses all other options.
 func (c *con) do(buf []byte) {
-	// if we don't have the option in the buffer yet, return and wait for more information
+	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
 	}
@@ -200,20 +214,22 @@ func (c *con) do(buf []byte) {
 	default:
 		c.c.Write([]byte{255, WONT, opt})
 	}
-	// consume IAC, Cmd, and Option from the input buffer
+	// consume IAC, Cmd, and Option from the input process
 	c.bIn.Next(3)
 }
 
+// Wont responds to Telnet WONT commands.
+// By default it consumes these commands without any further processing.
 func (c *con) wont(buf []byte) {
-	// if we don't have the option in the buffer yet, return and wait for more information
+	// if we don't have the option in the process yet, return and wait for more information
 	if len(buf) < 3 {
 		return
 	}
-	// consume IAC, Cmd, and Option from the input buffer
+	// consume IAC, Cmd, and Option from the input process
 	_ = c.bIn.Next(3)
 }
 
-// Write the byte buffer to the output stream. Escaping 255 bytes is done
+// Write the byte process to the output stream. Escaping 255 bytes is done
 // automatically, so is not required by the caller. Note that the written
 // count may be off due to the 255 byte escaping.
 func (c *con) Write(b []byte) (n int, err error) {

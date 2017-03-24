@@ -119,7 +119,7 @@ func TestBuffer(t *testing.T) {
 	tel.c = c.Client
 	s := c.Server
 
-	go tel.buffer()
+	go tel.process()
 
 	time.Sleep(time.Duration(50) * time.Millisecond)
 
@@ -157,7 +157,7 @@ func TestBuffer_ForwardUpToIAC(t *testing.T) {
 	c := mock_conn.NewConn()
 	tel.c = c.Client
 
-	go tel.buffer()
+	go tel.process()
 	time.Sleep(time.Duration(50) * time.Millisecond)
 
 	go func() {
@@ -195,7 +195,7 @@ func TestBuffer_ForwardUpToIACAndProcess(t *testing.T) {
 	tel.c = c.Client
 	s := c.Server
 
-	go tel.buffer()
+	go tel.process()
 	time.Sleep(time.Duration(50) * time.Millisecond)
 
 	go func() {
