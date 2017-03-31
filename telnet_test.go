@@ -1,8 +1,11 @@
 package gote
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,7 +33,7 @@ func TestDo(t *testing.T) {
 	}
 
 	c := mock_conn.NewConn()
-	tel.c = c.Client
+	tel.Conn = c.Client
 
 	go func() {
 		_, err := tel.i.Write([]byte{IAC, DO, ECHO})
@@ -53,7 +56,7 @@ func TestWill(t *testing.T) {
 	}
 
 	c := mock_conn.NewConn()
-	tel.c = c.Client
+	tel.Conn = c.Client
 
 	go func() {
 		_, err := tel.i.Write([]byte{IAC, WILL, ECHO})
@@ -61,7 +64,7 @@ func TestWill(t *testing.T) {
 			t.Fatal(err)
 		}
 		tel.processIAC()
-		tel.c.Close()
+		tel.Conn.Close()
 	}()
 
 	s := c.Server
@@ -77,7 +80,7 @@ func TestWont(t *testing.T) {
 	}
 
 	c := mock_conn.NewConn()
-	tel.c = c.Client
+	tel.Conn = c.Client
 
 	_, err := tel.i.Write([]byte{IAC, WONT, ECHO})
 	if err != nil {
@@ -91,10 +94,12 @@ func TestDont(t *testing.T) {
 	tel := &conn{
 		i: bytes.NewBuffer(nil),
 		u: bytes.NewBuffer(nil),
+		//uLock: &sync.Mutex{},
+		//iLock: &sync.Mutex{},
 	}
 
 	c := mock_conn.NewConn()
-	tel.c = c.Client
+	tel.Conn = c.Client
 
 	go func() {
 		_, err := tel.i.Write([]byte{IAC, DONT, ECHO})
@@ -111,125 +116,119 @@ func TestDont(t *testing.T) {
 }
 
 func TestBuffer(t *testing.T) {
-	tel := &conn{
-		quit: make(chan bool, 1),
-	}
-
-	c := mock_conn.NewConn()
-	tel.c = c.Client
-	s := c.Server
-
-	go tel.process()
-
-	time.Sleep(time.Duration(50) * time.Millisecond)
-
-	go func() {
-		//defer tel.c.Close()
-		i, err := s.Write([]byte{IAC, DO, ECHO})
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func(wg *sync.WaitGroup) {
+		con, err := Dial("tcp", ":3000")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if i == 0 {
-			t.Fatal("Nothing was written to server output stream.")
-		}
-		time.Sleep(time.Duration(50) * time.Millisecond)
-	}()
+		defer con.Close()
+		time.Sleep(time.Duration(20) * time.Millisecond)
+		wg.Wait()
+		con.Close()
+	}(&wg)
 
-	buf := make([]byte, 3)
-	i, err := s.Read(buf)
-	if i != 0 {
-		assert.Equal(t, []byte{IAC, WONT, ECHO}, buf)
-	}
-
+	l, err := net.Listen("tcp", ":3000")
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Duration(5) * time.Millisecond)
+	defer l.Close()
 
-	tel.quit <- true
+	conn, err := l.Accept()
+	if err != nil {
+		return
+	}
+
+	defer conn.Close()
+
+	conn.Write([]byte{IAC, DO, ECHO})
+
+	time.Sleep(time.Duration(20) * time.Millisecond)
+	buf := bufio.NewReader(conn)
+	b, err := buf.Peek(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, []byte{IAC, WONT, ECHO}, b)
+	wg.Done()
 }
 
-func TestBuffer_ForwardUpToIAC(t *testing.T) {
-	tel := &conn{
-		quit: make(chan bool, 1),
-	}
+func TestBuffer_ProcessingIAC(t *testing.T) {
+	wgServer := sync.WaitGroup{}
+	wgClient := sync.WaitGroup{}
+	wgClient.Add(1)
+	wgServer.Add(1)
 
-	c := mock_conn.NewConn()
-	tel.c = c.Client
-
-	go tel.process()
-	time.Sleep(time.Duration(50) * time.Millisecond)
-
-	go func() {
-		_, err := tel.i.Write([]byte{1, 2, 3, 4, 5, 6, IAC, DO, ECHO, IAC, IAC})
+	go func(wgServer *sync.WaitGroup, wgClient *sync.WaitGroup) {
+		con, err := Dial("tcp", ":3000")
 		if err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(time.Duration(50) * time.Millisecond)
-	}()
+		defer con.Close()
 
-	// Wait for the response
-	for tel.u.Len() == 0 {
 		time.Sleep(time.Duration(20) * time.Millisecond)
-	}
 
-	buf := make([]byte, 6)
-	_, err := tel.u.Read(buf)
+		b := make([]byte, 7)
+		i, err := con.Read(b)
+		assert.NoError(t, err)
+		assert.Equal(t, 7, i)
+		assert.Equal(t, []byte{1, 2, 3, 4, 5, 6, IAC}, b[:i])
+		wgServer.Wait()
+		wgClient.Done()
+	}(&wgServer, &wgClient)
 
+	l, err := net.Listen("tcp", ":3000")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, []byte{1, 2, 3, 4, 5, 6}, buf)
+	defer l.Close()
 
-	time.Sleep(time.Duration(50) * time.Millisecond)
+	conn, err := l.Accept()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
 
-	tel.quit <- true
+	conn.Write([]byte{1, 2, 3, 4, 5, 6, IAC, DO, ECHO, IAC, IAC})
+	time.Sleep(time.Duration(20) * time.Millisecond)
+	buf := bufio.NewReader(conn)
+	b, err := buf.Peek(3)
+	assert.NoError(t, err)
+	assert.Equal(t, []byte{IAC, WONT, ECHO}, b)
+	wgServer.Done()
+	wgClient.Wait()
 }
 
-func TestBuffer_ForwardUpToIACAndProcess(t *testing.T) {
-	tel := &conn{
-		quit: make(chan bool, 1),
-	}
+func TestErrorPropagation(t *testing.T) {
+	wgServer := sync.WaitGroup{}
+	wgClient := sync.WaitGroup{}
+	wgClient.Add(1)
+	wgServer.Add(1)
 
-	c := mock_conn.NewConn()
-	tel.c = c.Client
-	s := c.Server
-
-	go tel.process()
-	time.Sleep(time.Duration(50) * time.Millisecond)
-
-	go func() {
-		_, err := tel.i.Write([]byte{1, 2, 3, 4, 5, 6, IAC, DO, ECHO})
+	go func(wgServer *sync.WaitGroup, wgClient *sync.WaitGroup) {
+		con, err := Dial("tcp", ":3000")
 		if err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(time.Duration(50) * time.Millisecond)
-	}()
+		wgServer.Wait()
+		b := make([]byte, 2)
+		_, err = con.Read(b)
+		assert.Error(t, err)
+		wgClient.Done()
+	}(&wgServer, &wgClient)
 
-	// Wait for the response
-	for tel.u.Len() == 0 {
-		time.Sleep(time.Duration(20) * time.Millisecond)
-	}
-
-	buf := make([]byte, 6)
-	_, err := tel.u.Read(buf)
-
+	l, err := net.Listen("tcp", ":3000")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer l.Close()
 
-	assert.Equal(t, []byte{1, 2, 3, 4, 5, 6}, buf)
-
-	buf = make([]byte, 3)
-	// Wait for the next set
-	_, err = s.Read(buf)
-
+	conn, err := l.Accept()
 	if err != nil {
-		t.Fatal(err)
+		return
 	}
-
-	assert.Equal(t, []byte{IAC, WONT, ECHO}, buf)
-
-	tel.quit <- true
-	time.Sleep(time.Duration(50) * time.Millisecond)
+	conn.Close()
+	wgServer.Done()
+	wgClient.Wait()
 }

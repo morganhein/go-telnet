@@ -1,11 +1,10 @@
 // Package gote (go-telnet) provides a net.Conn compatible interface for connection to telnet servers
-// that require telnet option negotiation
+// that require telnet option negotiation. Behavior mimics net.Conn behavior wherever possible, exceptions noted.
 package gote
 
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -72,21 +71,30 @@ type Connection interface {
 	// SetWriteDeadline is a pass-through method to the underlying net.conn
 	// without any processing.
 	SetWriteDeadline(t time.Time) error
-	//SetOption(opt byte, val []byte) (success bool, err error) proposed for future development.
+	// Proposed methods
+	// SetOption tries to set the option through negotiation with
+	// the server.
+	//SetOption(opt byte, val []byte) (success bool, err error)
+	// RequestOption requests the status of an option from the server.
+	//RequestOption(opt byte) (response []byte, err error)
 }
 
 // Con is the internal telnet connection object.
 type conn struct {
 	net.Conn
-	quit chan bool
-	i    *bytes.Buffer // in from the connection
-	u    *bytes.Buffer // upstream
+	quit      chan bool
+	buf       [][]byte
+	uLock     *sync.Mutex
+	eLock     *sync.Mutex
+	lastError error
+	i         *bytes.Buffer // in from the connection
+	u         *bytes.Buffer // upstream
 }
 
 // Dial connects to a TCP endpoint and returns a Telnet Connection object,
 // which transparently handles telnet options and escaping.
 func Dial(network, address string) (Connection, error) {
-	fmt.Println("Connecting.")
+	fmt.Println("Dialing this: ", address)
 	var t conn
 	return t.dial(network, address)
 }
@@ -99,6 +107,8 @@ func (c *conn) dial(network, address string) (Connection, error) {
 		return nil, err
 	}
 	c.quit = make(chan bool, 1)
+	c.uLock = &sync.Mutex{}
+	c.eLock = &sync.Mutex{}
 	//tcp input
 	c.i = bytes.NewBuffer(nil)
 	//upstream
@@ -107,17 +117,36 @@ func (c *conn) dial(network, address string) (Connection, error) {
 	return c, nil
 }
 
-// Read the current process sent from the server after being processed
-// for telnet options.
+// Read the current buffer sent from the server	fprint after being processed
+// for telnet options. This blocks until data is available.
 func (c *conn) Read(b []byte) (n int, err error) {
+	// otherwise push the processed data
+	c.uLock.Lock()
+	defer c.uLock.Unlock()
+	ready := c.u.Len() > 0
+	for !ready {
+		// push connection errors upstream, only after buffer has been sent
+		c.eLock.Lock()
+		if c.lastError != nil {
+			return 0, c.lastError
+		}
+		c.eLock.Unlock()
+
+		c.uLock.Unlock()
+		time.Sleep(time.Duration(20) * time.Millisecond)
+		c.uLock.Lock()
+		ready = c.u.Len() > 0
+	}
 	return c.u.Read(b)
 }
 
-// Write the byte process to the output stream. Escaping 255 bytes is done
+// Write the byte buffer to the output stream. Escaping 255 bytes is done
 // automatically, so is not required by the caller. Note that the written
-// count may be off due to the 255 byte escaping.
+// count may be off due to the 255 byte escaping. This will be fixed in future releases.
+// Currently not thread safe, although that functionality may be added later.
 func (c *conn) Write(b []byte) (n int, err error) {
-	for i := 0; i < len(b); i++ {
+	l1 := len(b)
+	for i := 0; i < l1; i++ {
 		// If the stream contains a 255, then escape it by sending a second 255
 		if b[i] == IAC {
 			b = append(b, 0)
@@ -125,8 +154,15 @@ func (c *conn) Write(b []byte) (n int, err error) {
 			b[i] = byte(255)
 		}
 	}
-	//Todo: possibly return the unescaped byte count instead
-	return c.Conn.Write(b)
+
+	_, err = c.write(b)
+	// TODO: Calculate the deltas of what was written vs expected to calculate "upstream/assumed" written bytes
+	return l1, err
+}
+
+func (c *conn) write(b []byte) (n int64, err error) {
+	c.buf = append(c.buf, b)
+	return (*net.Buffers)(&c.buf).WriteTo(c.Conn)
 }
 
 // Close the connection
@@ -137,14 +173,42 @@ func (c *conn) Close() error {
 	return c.Conn.Close()
 }
 
-// Process buffers incoming traffic, parses it for telnet IAC commands,
+// Buffer reads from the underlying TCP connection and buffers as necessary,
+// passing it onto process to handle Telnet commands.
+func (c *conn) buffer(quit chan bool, updates chan []byte, errors chan error) {
+	buf := make([]byte, 2048)
+	for {
+		i, err := c.Conn.Read(buf)
+		if err != nil {
+			errors <- err
+		}
+		if i > 0 {
+			updates <- buf[:i]
+		} else {
+			time.Sleep(time.Duration(30) * time.Millisecond)
+		}
+		select {
+		case <-quit:
+			break
+		default:
+		}
+	}
+}
+
+// Process parses the buffer for telnet IAC commands,
 // and forwards on the results either upstream or to be handled as a telnet command.
 func (c *conn) process() {
-	go io.Copy(c.i, c.Conn)
+	bufquit := make(chan bool, 1)
+	updates := make(chan []byte, 1024)
+	errors := make(chan error, 2)
+
+	go c.buffer(bufquit, updates, errors)
 
 	for {
-		// if there's data to process
-		if b := c.i.Bytes(); len(b) > 0 {
+		toProcess := c.i.Len() > 0
+		if toProcess {
+			b := c.i.Bytes()
+			c.uLock.Lock()
 			//If no 255's exist, just copy and move on
 			if i := bytes.IndexByte(b, IAC); i == -1 {
 				c.i.WriteTo(c.u)
@@ -154,17 +218,22 @@ func (c *conn) process() {
 				c.u.Write(c.i.Next(i))
 				c.processIAC()
 			}
+			c.uLock.Unlock()
 		}
-
 		select {
 		case <-c.quit:
+			bufquit <- true
 			return
+		case b := <-updates:
+			c.i.Write(b)
+		case err := <-errors:
+			c.eLock.Lock()
+			c.lastError = err
+			c.eLock.Unlock()
 		default:
-			break
 		}
-
 		// If the input process is empty, that means the connection is also empty so let's wait a bit
-		if c.i.Len() == 0 {
+		if !toProcess {
 			time.Sleep(time.Duration(100) * time.Millisecond)
 		}
 	}
