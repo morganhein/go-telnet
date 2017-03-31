@@ -1,4 +1,3 @@
-
 # GOTE (go-telnet)
 [![Build Status](https://travis-ci.org/morganhein/go-telnet.svg?branch=master)](https://travis-ci.org/morganhein/go-telnet) [![Go Report Card](https://goreportcard.com/badge/github.com/morganhein/go-telnet)](https://goreportcard.com/report/github.com/morganhein/go-telnet)    
 
@@ -13,3 +12,4 @@ It currently refuses and/or disables all options in a sane manner, except for bi
 
 Further work needs to be done to implement other telnet options. This is planned, however I have little motivation to do so at the moment.
 
+Current version requires Go1.8 to utilize the os specific writev functions.
