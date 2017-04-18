@@ -183,7 +183,10 @@ func (c *conn) buffer(quit chan bool, updates chan []byte, errors chan error) {
 			errors <- err
 		}
 		if i > 0 {
-			updates <- buf[:i]
+			//fmt.Println("TX length", len(buf[:i]))
+			u := make([]byte, i)
+			copy(u, buf[:i])
+			updates <- u
 		} else {
 			time.Sleep(time.Duration(30) * time.Millisecond)
 		}
@@ -199,7 +202,7 @@ func (c *conn) buffer(quit chan bool, updates chan []byte, errors chan error) {
 // and forwards on the results either upstream or to be handled as a telnet command.
 func (c *conn) process() {
 	bufquit := make(chan bool, 1)
-	updates := make(chan []byte, 1024)
+	updates := make(chan []byte, 2048)
 	errors := make(chan error, 2)
 
 	go c.buffer(bufquit, updates, errors)
@@ -225,6 +228,7 @@ func (c *conn) process() {
 			bufquit <- true
 			return
 		case b := <-updates:
+			//fmt.Println("RX length", len(b))
 			c.i.Write(b)
 		case err := <-errors:
 			c.eLock.Lock()
@@ -327,7 +331,6 @@ func (c *conn) do(buf []byte) {
 	switch opt {
 	case BIN:
 		c.Conn.Write([]byte{255, WILL, BIN})
-		break
 	default:
 		c.Conn.Write([]byte{255, WONT, opt})
 	}
